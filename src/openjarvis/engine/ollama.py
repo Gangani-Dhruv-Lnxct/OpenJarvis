@@ -71,16 +71,14 @@ def _is_control_token_only_args(raw_args: Any) -> bool:
 
 
 def _default_num_ctx() -> int:
-    """Default context window (tokens). Override with ``JARVIS_NUM_CTX``.
-
-    Raised above Ollama's 4k default so an image (which costs many tokens)
-    plus a real conversation fit. 16k is comfortable for small models on a
-    typical consumer GPU.
-    """
+    """Default context window (tokens). Override with ``JARVIS_NUM_CTX``."""
     try:
-        return int(os.environ.get("JARVIS_NUM_CTX", "16384"))
+        val = os.environ.get("JARVIS_NUM_CTX")
+        if val:
+            return int(val)
     except ValueError:
-        return 16384
+        pass
+    return 4096
 
 
 def _ollama_request_options(
@@ -94,6 +92,10 @@ def _ollama_request_options(
         "temperature": temperature,
         "num_predict": max_tokens,
     }
+    # Utilize full CPU core parallelism for fast local inference
+    cpu_cores = os.cpu_count() or 4
+    options["num_thread"] = int(kwargs.get("num_thread", cpu_cores))
+
     if kwargs.get("num_ctx") is not None:
         options["num_ctx"] = int(kwargs["num_ctx"])
     else:
@@ -119,6 +121,7 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         self,
         host: str | None = None,
         *,
+        api_key: str | None = None,
         timeout: float = 1800.0,
     ) -> None:
         # Priority: explicit host (from config.toml) > OLLAMA_HOST env var > default
@@ -130,11 +133,20 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         # wedged token read is bounded by ``timeout`` instead of hanging the
         # single event loop for the httpx default.
         self._timeout = timeout
+        self._api_key = api_key or os.environ.get("OLLAMA_API_KEY")
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        self._headers = headers or None
         # Injection seam for tests: an ``httpx.MockTransport`` swapped in here drives
         # the async stream path with no real Ollama server. ``None`` in production so
         # httpx uses its default networking.
         self._async_transport: httpx.AsyncBaseTransport | None = None
-        self._client = httpx.Client(base_url=self._host, timeout=timeout)
+        self._client = httpx.Client(
+            base_url=self._host,
+            timeout=timeout,
+            headers=self._headers,
+        )
         # Last stream usage — captured from Ollama's final chunk
         self._last_stream_usage: Dict[str, int] = {}
 
@@ -202,6 +214,21 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
             ) from exc
         except httpx.HTTPStatusError as exc:
             body = exc.response.text[:500] if exc.response else ""
+            if exc.response.status_code == 401:
+                hint = ""
+                if ":cloud" in model:
+                    hint = (
+                        f" (The model '{model}' is an Ollama Cloud model requiring authentication. "
+                        "Run 'ollama login' to sign in to ollama.com, or switch to a local model like 'qwen3.5:4b' or 'llama3.2:latest')"
+                    )
+                else:
+                    hint = (
+                        " (Ollama returned 401 Unauthorized. Set OLLAMA_API_KEY if required, "
+                        "or switch to a local model like 'qwen3.5:4b' or 'llama3.2:latest')"
+                    )
+                raise RuntimeError(
+                    f"Ollama returned 401: {body or 'Unauthorized'}{hint}"
+                ) from exc
             raise RuntimeError(
                 f"Ollama returned {exc.response.status_code}: {body}"
             ) from exc
@@ -317,7 +344,9 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                     # Read the (short) error body before touching ``.text``:
                     # a streaming response is otherwise unread.
                     await resp.aread()
-                    self._raise_stream_http_error(resp.status_code, resp.text)
+                    self._raise_stream_http_error(
+                        resp.status_code, resp.text, model=model
+                    )
                 async for line in resp.aiter_lines():
                     if not line.strip():
                         continue
@@ -436,7 +465,9 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                 # silent EMPTY stream rather than a clean engine error.
                 if not resp.is_success:
                     await resp.aread()
-                    self._raise_stream_http_error(resp.status_code, resp.text)
+                    self._raise_stream_http_error(
+                        resp.status_code, resp.text, model=payload.get("model")
+                    )
 
                 finish_reason: str | None = None
                 async for line in resp.aiter_lines():

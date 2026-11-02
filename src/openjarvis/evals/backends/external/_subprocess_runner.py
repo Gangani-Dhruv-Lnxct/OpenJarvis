@@ -279,7 +279,10 @@ def _try_start_rapl() -> Optional[_Sampler]:
             self._last_t = time.monotonic()
 
         def _read_watts(self) -> float:
-            now_uj = int(rapl_path.read_text().strip())
+            try:
+                now_uj = int(rapl_path.read_text().strip())
+            except OSError:
+                return 0.0
             now_t = time.monotonic()
             d_uj = now_uj - self._last_uj
             d_t = now_t - self._last_t
@@ -287,9 +290,12 @@ def _try_start_rapl() -> Optional[_Sampler]:
             self._last_t = now_t
             return (d_uj * 1e-6) / d_t if d_t > 0 else 0.0
 
-    s = _RaplSampler()
-    s.start()
-    return s
+    try:
+        s = _RaplSampler()
+        s.start()
+        return s
+    except OSError:
+        return None
 
 
 def _start_sampler() -> _Sampler:

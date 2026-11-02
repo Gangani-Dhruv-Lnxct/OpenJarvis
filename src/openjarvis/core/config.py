@@ -31,6 +31,7 @@ from openjarvis.core.paths import (
     get_config_dir,
     get_config_path,
     get_data_dir,
+    get_logs_dir,
 )
 
 if TYPE_CHECKING:
@@ -1162,8 +1163,8 @@ class AgentConfig:
 class ServerConfig:
     """API server settings."""
 
-    host: str = "127.0.0.1"
-    port: int = 8000
+    host: str = "0.0.0.0"
+    port: int = 10101
     agent: str = "orchestrator"
     model: str = ""
     workers: int = 1
@@ -2469,6 +2470,7 @@ __all__ = [
     "get_config_dir",
     "get_config_path",
     "get_data_dir",
+    "get_logs_dir",
     "EmailChannelConfig",
     "EngineConfig",
     "FeishuChannelConfig",

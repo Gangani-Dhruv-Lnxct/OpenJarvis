@@ -18,7 +18,11 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 PYPROJECT = ROOT / "pyproject.toml"

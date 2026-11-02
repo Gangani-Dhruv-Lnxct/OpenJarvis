@@ -21,7 +21,16 @@ router = APIRouter(prefix="/v1/connectors/upload", tags=["upload"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-_ALLOWED_EXTENSIONS = {".txt", ".md", ".csv", ".pdf", ".docx"}
+_TEXT_EXTENSIONS = {
+    ".txt", ".md", ".markdown", ".csv", ".tsv", ".log",
+    ".json", ".yaml", ".yml", ".xml", ".html", ".css",
+    ".js", ".ts", ".tsx", ".jsx", ".py", ".rs", ".go",
+    ".java", ".c", ".cpp", ".h", ".hpp", ".sql", ".sh",
+    ".bash", ".toml", ".ini", ".env", ".rtf",
+}
+_DOC_EXTENSIONS = {".pdf", ".docx"}
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+_ALLOWED_EXTENSIONS = _TEXT_EXTENSIONS | _DOC_EXTENSIONS | _IMAGE_EXTENSIONS
 
 
 def _chunk_text(text: str, max_chars: int = 1000) -> List[str]:
@@ -56,13 +65,23 @@ def _chunk_text(text: str, max_chars: int = 1000) -> List[str]:
 
 
 def _extract_text_from_pdf(data: bytes) -> str:
-    """Extract text from a PDF using pdfplumber or PyPDF2."""
+    """Extract text from a PDF using pdfplumber, pypdf, or PyPDF2."""
     # Try pdfplumber first
     try:
         import pdfplumber  # type: ignore[import-untyped]
 
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             pages = [p.extract_text() or "" for p in pdf.pages]
+        return "\n\n".join(pages)
+    except ImportError:
+        pass
+
+    # Try pypdf next
+    try:
+        from pypdf import PdfReader  # type: ignore[import-untyped]
+
+        reader = PdfReader(io.BytesIO(data))
+        pages = [p.extract_text() or "" for p in reader.pages]
         return "\n\n".join(pages)
     except ImportError:
         pass
@@ -78,8 +97,8 @@ def _extract_text_from_pdf(data: bytes) -> str:
         raise HTTPException(
             status_code=500,
             detail=(
-                "PDF parsing requires pdfplumber or PyPDF2. "
-                "Install one with: pip install pdfplumber"
+                "PDF parsing requires pypdf or pdfplumber. "
+                "Install with: pip install pypdf"
             ),
         )
 
@@ -99,6 +118,35 @@ def _extract_text_from_docx(data: bytes) -> str:
                 "Install with: pip install python-docx"
             ),
         )
+
+
+def _extract_image_info(data: bytes, filename: str) -> str:
+    """Extract metadata / description / OCR from an image."""
+    try:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        width, height = img.size
+        img_format = img.format or "Image"
+        mode = img.mode
+
+        ocr_text = ""
+        try:
+            import pytesseract  # type: ignore[import-untyped]
+            ocr_text = pytesseract.image_to_string(img).strip()
+        except Exception:
+            pass
+
+        desc = (
+            f"Image file: {filename} "
+            f"({width}x{height} px, format {img_format}, mode {mode}, {len(data) // 1024} KB)."
+        )
+        if ocr_text:
+            desc += f"\nExtracted Text (OCR):\n{ocr_text}"
+        return desc
+    except Exception as exc:
+        logger.debug("Failed to extract image metadata: %s", exc)
+        return f"Image file: {filename} ({len(data) // 1024} KB visual asset)."
 
 
 def _get_store() -> KnowledgeStore:
@@ -122,9 +170,83 @@ class IngestResponse(BaseModel):
     source: str = "upload"
 
 
+class ExtractResponse(BaseModel):
+    filename: str
+    ext: str
+    size: int
+    file_type: str
+    text: str
+    preview: str
+    base64: Optional[str] = None
+    chunks_count: int = 1
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@router.post("/extract", response_model=ExtractResponse)
+async def extract_file(file: UploadFile = File(...)) -> ExtractResponse:
+    """Extract text and metadata from an uploaded file for chat reading and preview."""
+    import base64
+
+    filename = file.filename or "untitled"
+    ext = ""
+    if "." in filename:
+        ext = "." + filename.rsplit(".", 1)[-1].lower()
+
+    if ext not in _ALLOWED_EXTENSIONS:
+        allowed = ", ".join(sorted(_ALLOWED_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}. Allowed: {allowed}",
+        )
+
+    data = await file.read()
+    size = len(data)
+    base64_data: Optional[str] = None
+
+    if ext in _IMAGE_EXTENSIONS:
+        file_type = "image"
+        text = _extract_image_info(data, filename)
+        mime = "image/png" if ext == ".png" else "image/webp" if ext == ".webp" else "image/jpeg"
+        base64_str = base64.b64encode(data).decode("utf-8")
+        base64_data = f"data:{mime};base64,{base64_str}"
+    elif ext == ".pdf":
+        file_type = "document"
+        text = _extract_text_from_pdf(data)
+    elif ext == ".docx":
+        file_type = "document"
+        text = _extract_text_from_docx(data)
+    elif ext in {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json", ".sql", ".sh", ".rs", ".go", ".c", ".cpp", ".java"}:
+        file_type = "code"
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("latin-1", errors="replace")
+    else:
+        file_type = "text"
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            text = data.decode("latin-1", errors="replace")
+
+    chunks = _chunk_text(text) if text else []
+    preview = text[:300].strip()
+    if len(text) > 300:
+        preview += "..."
+
+    return ExtractResponse(
+        filename=filename,
+        ext=ext,
+        size=size,
+        file_type=file_type,
+        text=text,
+        preview=preview,
+        base64=base64_data,
+        chunks_count=max(len(chunks), 1),
+    )
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -177,15 +299,17 @@ async def ingest_files(
         data = await upload.read()
 
         # Parse content based on extension
-        if ext in (".txt", ".md", ".csv"):
+        if ext in _TEXT_EXTENSIONS:
             try:
                 text = data.decode("utf-8")
             except UnicodeDecodeError:
-                text = data.decode("latin-1")
+                text = data.decode("latin-1", errors="replace")
         elif ext == ".pdf":
             text = _extract_text_from_pdf(data)
         elif ext == ".docx":
             text = _extract_text_from_docx(data)
+        elif ext in _IMAGE_EXTENSIONS:
+            text = _extract_image_info(data, filename)
         else:
             continue
 
@@ -216,3 +340,4 @@ async def ingest_files(
         )
 
     return IngestResponse(chunks_added=total_chunks)
+

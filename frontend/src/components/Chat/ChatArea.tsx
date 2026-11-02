@@ -6,7 +6,7 @@ import { StreamingDots } from './StreamingDots';
 import { useAppStore } from '../../lib/store';
 import { shouldAutoplayFinishedReply, useTtsStore } from '../../lib/tts';
 import { stripThinkTags } from '../../lib/message-text';
-import { Sparkles, PanelRightOpen, PanelRightClose, Database, MessageSquare, X } from 'lucide-react';
+import { Sparkles, Database, MessageSquare, X, UploadCloud } from 'lucide-react';
 import { listConnectors } from '../../lib/connectors-api';
 
 function getGreeting(): string {
@@ -20,14 +20,52 @@ export function ChatArea() {
   const activeId = useAppStore((s) => s.activeId);
   const messages = useAppStore((s) => s.messages);
   const streamState = useAppStore((s) => s.streamState);
-  const systemPanelOpen = useAppStore((s) => s.systemPanelOpen);
-  const toggleSystemPanel = useAppStore((s) => s.toggleSystemPanel);
   const navigate = useNavigate();
   const listRef = useRef<HTMLDivElement>(null);
   const shouldAutoScroll = useRef(true);
   const wasStreaming = useRef(false);
   const lastScrollTop = useRef(0);
   const isCurrentChatStreaming = streamState.isStreaming && streamState.conversationId === activeId;
+
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current += 1;
+    if (e.dataTransfer && e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragging(true);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  }, [isDragging]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current -= 1;
+    if (dragCounter.current <= 0) {
+      dragCounter.current = 0;
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter.current = 0;
+    setIsDragging(false);
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      window.dispatchEvent(
+        new CustomEvent('chat-files-dropped', { detail: Array.from(e.dataTransfer.files) })
+      );
+    }
+  }, []);
 
   // Autoplay: speak a reply once it is finished, never while it streams -- a
   // partial sentence would be synthesized and then cut off by the next chunk.
@@ -130,21 +168,52 @@ export function ChatArea() {
 
   const isEmpty = messages.length === 0 && !isCurrentChatStreaming;
 
-  const PanelIcon = systemPanelOpen ? PanelRightClose : PanelRightOpen;
-
   return (
-    <div className="flex flex-col h-full">
-      {/* Toggle bar */}
-      <div className="flex items-center justify-end px-3 py-1.5 shrink-0">
-        <button
-          onClick={toggleSystemPanel}
-          className="p-1.5 rounded-md transition-colors cursor-pointer"
-          style={{ color: 'var(--color-text-tertiary)' }}
-          title={`${systemPanelOpen ? 'Hide' : 'Show'} system panel (${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+I)`}
+    <div
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="relative flex flex-col h-full overflow-hidden"
+    >
+      {isDragging && (
+        <div
+          className="absolute inset-0 z-50 flex flex-col items-center justify-center p-6 pointer-events-none transition-all"
+          style={{
+            background: 'rgba(8, 145, 178, 0.12)',
+            backdropFilter: 'blur(8px)',
+          }}
         >
-          <PanelIcon size={16} />
-        </button>
-      </div>
+          <div
+            className="flex flex-col items-center justify-center p-8 rounded-3xl border-2 border-dashed max-w-lg w-full text-center shadow-2xl transition-all scale-100"
+            style={{
+              background: 'var(--color-surface)',
+              borderColor: 'var(--color-accent)',
+              boxShadow: '0 20px 40px -15px var(--color-accent-glow)',
+            }}
+          >
+            <div
+              className="p-4 rounded-2xl mb-4 animate-bounce"
+              style={{ background: 'var(--color-accent-subtle)', color: 'var(--color-accent)' }}
+            >
+              <UploadCloud size={48} />
+            </div>
+            <h3 className="text-lg font-bold mb-1.5" style={{ color: 'var(--color-text)' }}>
+              Drop files or images anywhere to read & train
+            </h3>
+            <p className="text-xs leading-relaxed max-w-sm mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+              Images (PNG, JPG, WEBP), documents (PDF, DOCX, TXT), and code files will be parsed and ready for chat & memory training.
+            </p>
+            <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: 'var(--color-accent)' }}>
+              <Sparkles size={14} />
+              <span>Release to attach immediately</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Top spacer matching header alignment */}
+      <div className="h-11 shrink-0" />
 
       {/* Data sources banner */}
       {hasConnectedSources === false && !bannerDismissed && (

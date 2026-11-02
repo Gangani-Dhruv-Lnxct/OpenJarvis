@@ -19,6 +19,7 @@ class ChatMessage(BaseModel):
     name: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
+    images: Optional[List[str]] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -28,6 +29,7 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 1024
     stream: bool = False
     tools: Optional[List[Dict[str, Any]]] = None
+    fast_mode: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +120,20 @@ class ModelListResponse(BaseModel):
     data: List[ModelObject] = Field(default_factory=list)
 
 
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str = "Spanish"
+    source_language: str = "English"
+    model: Optional[str] = None
+
+
+class TranslateResponse(BaseModel):
+    original_text: str
+    translated_text: str
+    target_language: str
+    source_language: str
+
+
 __all__ = [
     "ChatCompletionChunk",
     "ChatCompletionRequest",
@@ -130,5 +146,8 @@ __all__ = [
     "ModelListResponse",
     "ModelObject",
     "StreamChoice",
+    "TranslateRequest",
+    "TranslateResponse",
     "UsageInfo",
 ]
+

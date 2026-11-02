@@ -3,10 +3,11 @@ import { getBase, authHeaders } from './api';
 
 export interface ChatRequest {
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string; images?: string[] }>;
   stream: true;
   temperature?: number;
   max_tokens?: number;
+  fast_mode?: boolean;
 }
 
 export async function* streamChat(

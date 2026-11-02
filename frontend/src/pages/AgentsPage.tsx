@@ -1641,7 +1641,7 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
     if (!startRef.current) startRef.current = Date.now();
     timerRef.current = setInterval(
       () => setElapsedMs(Date.now() - startRef.current),
-      100,
+      250,
     );
     return clearTimer;
   }, [running, clearTimer]);
@@ -1741,6 +1741,7 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
   useEffect(() => {
     const iv = setInterval(async () => {
       try {
+        if (document.hidden) return;
         const a = await fetchManagedAgent(agentId);
         setActivity(a.current_activity || '');
         if (a.status === 'running' && !runningRef.current) {
@@ -1751,7 +1752,7 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
       } catch {
         /* ignore */
       }
-    }, 3000);
+    }, 6000);
     return () => clearInterval(iv);
   }, [agentId, finishRun]);
 
@@ -3525,6 +3526,7 @@ export function AgentsPage() {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
+        if (document.hidden) return;
         const agents = await fetchManagedAgents();
         for (const agent of agents) {
           const prev = prevStatuses.current[agent.id];
@@ -3541,7 +3543,7 @@ export function AgentsPage() {
         // stuck on "running" after a tick finished on the backend.
         setManagedAgents(agents);
       } catch {}
-    }, 5000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [setManagedAgents]);
 

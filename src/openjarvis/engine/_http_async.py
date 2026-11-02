@@ -109,7 +109,12 @@ class AsyncHTTPEngineMixin:
         except Exception:  # noqa: BLE001 — cleanup must never mask the close
             logger.debug("Async client did not close cleanly", exc_info=True)
 
-    def _raise_stream_http_error(self, status: int, detail: str) -> NoReturn:
+    def _raise_stream_http_error(
+        self,
+        status: int,
+        detail: str,
+        model: str | None = None,
+    ) -> NoReturn:
         """Map a non-success streaming HTTP response to a clean engine error."""
         detail = (detail or "").strip()
         if (
@@ -118,6 +123,24 @@ class AsyncHTTPEngineMixin:
             and looks_like_context_length_error(detail)
         ):
             raise EngineContextLengthError(_CONTEXT_LENGTH_USER_MESSAGE)
+
+        if status == 401:
+            detail_suffix = f": {detail}" if detail else ""
+            hint = ""
+            if model and ":cloud" in model:
+                hint = (
+                    f" (The model '{model}' is a remote Ollama Cloud model requiring authentication. "
+                    "Run 'ollama login' in terminal to sign in, or select a local model like 'qwen3.5:4b' or 'llama3.2:latest')"
+                )
+            elif self.engine_id == "ollama":
+                hint = (
+                    " (Ollama returned Unauthorized. Run 'ollama login', set OLLAMA_API_KEY, "
+                    "or select a local model like 'qwen3.5:4b' or 'llama3.2:latest')"
+                )
+            raise EngineConnectionError(
+                f"{self.engine_id} engine at {self._host} returned HTTP 401{detail_suffix}{hint}"
+            )
+
         detail_suffix = f": {detail}" if detail else ""
         raise EngineConnectionError(
             f"{self.engine_id} engine at {self._host} returned HTTP "

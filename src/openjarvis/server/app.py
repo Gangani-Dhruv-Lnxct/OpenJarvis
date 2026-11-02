@@ -560,6 +560,33 @@ def create_app(
                 static_dir / "index.html",
                 headers=_NO_CACHE_HEADERS,
             )
+    else:
+
+        @app.get("/")
+        async def root_fallback():
+            """Friendly fallback when frontend static assets are not yet compiled."""
+            from fastapi.responses import HTMLResponse
+
+            body_style = (
+                "font-family:system-ui,sans-serif;"
+                "padding:2rem;max-width:640px;margin:auto;line-height:1.6"
+            )
+            html = (
+                "<!DOCTYPE html><html><head><title>OpenJarvis</title></head>"
+                f"<body style='{body_style}'>"
+                "<h2>OpenJarvis API Server is Running</h2>"
+                "<p>The API server is running and ready. Available resources:</p>"
+                "<ul>"
+                "<li><a href='/docs'>Interactive API Documentation (/docs)</a></li>"
+                "<li><a href='/health'>Health Check (/health)</a></li>"
+                "</ul>"
+                "<p style='color:#666;font-size:0.9em'>"
+                "To enable the web UI: build the frontend with "
+                "<code>npm --prefix frontend run build</code> or start it using "
+                "<code>jarvis gui</code>.</p>"
+                "</body></html>"
+            )
+            return HTMLResponse(html)
 
     return app
 

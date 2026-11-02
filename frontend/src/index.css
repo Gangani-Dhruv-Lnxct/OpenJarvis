@@ -474,14 +474,14 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
+    contain: strict;
     background-image:
       radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--color-accent) 10%, transparent), transparent 42%),
-      radial-gradient(circle at 85% 110%, color-mix(in srgb, var(--color-accent-purple) 8%, transparent), transparent 46%),
-      linear-gradient(to bottom, transparent, transparent);
+      radial-gradient(circle at 85% 110%, color-mix(in srgb, var(--color-accent-purple) 8%, transparent), transparent 46%);
   }
 
   .hud-backdrop::before {
-    /* faint grid */
+    /* faint static grid */
     content: '';
     position: absolute; inset: 0;
     background-image:
@@ -491,15 +491,6 @@
     mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
     -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 80%);
     opacity: 0.45;
-  }
-
-  .hud-backdrop::after {
-    /* noise grain */
-    content: '';
-    position: absolute; inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.31 0 0 0 0 0.82 0 0 0 0 1 0 0 0 0.035 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    mix-blend-mode: screen;
-    opacity: 0.5;
   }
 
   .hud-reticle {
@@ -549,10 +540,6 @@
   }
 
 
-  /* Activate slow grid drift on backdrop */
-  .hud-backdrop::before {
-    animation: hud-grid-drift 60s linear infinite;
-  }
 
   /* Live heartbeat dot — use next to hud-label for alive indicator */
   .hud-heartbeat {

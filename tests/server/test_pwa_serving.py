@@ -104,3 +104,24 @@ class TestPWAServing:
         assert resp.status_code == 200
         # Should get index.html, not the passwd file
         assert "SPA" in resp.text
+
+    def test_root_fallback_without_static(self, tmp_path, monkeypatch):
+        """Root endpoint should return friendly HTML when static assets are missing."""
+        nonexistent = tmp_path / "empty_dir"
+        engine = _make_engine()
+        original_truediv = pathlib.Path.__truediv__
+
+        def patched_truediv(self, key):
+            result = original_truediv(self, key)
+            if key == "static" and str(self).endswith("server"):
+                return nonexistent
+            return result
+
+        monkeypatch.setattr(pathlib.Path, "__truediv__", patched_truediv)
+        app = create_app(engine, "test-model")
+        monkeypatch.undo()
+
+        client = TestClient(app)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "OpenJarvis API Server is Running" in resp.text

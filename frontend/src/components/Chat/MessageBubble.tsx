@@ -5,15 +5,16 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, FileText, FileCode, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 import { AudioPlayer } from './AudioPlayer';
 import { ToolCallCard } from './ToolCallCard';
 import { ResearchTimeline } from './ResearchTimeline';
 import { rehypeCitations } from '../../lib/rehype-citations';
 import { XRayFooter } from './XRayFooter';
 import { SpeakMessageButton } from './SpeakMessageButton';
-import type { ChatMessage } from '../../types';
+import type { ChatAttachment, ChatMessage } from '../../types';
 import { stripThinkTags } from '../../lib/message-text';
+import { formatFileSize } from '../../lib/attachments';
 
 interface Props {
   message: ChatMessage;
@@ -96,6 +97,104 @@ function CopyMessageButton({ content }: { content: string }) {
   );
 }
 
+function AttachmentCard({ attachment }: { attachment: ChatAttachment }) {
+  const [expanded, setExpanded] = useState(false);
+  const isImg = attachment.type === 'image' || !!attachment.dataUrl;
+
+  if (isImg && attachment.dataUrl) {
+    return (
+      <div className="flex flex-col gap-1 mb-2 items-end">
+        <a
+          href={attachment.dataUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="group relative block overflow-hidden rounded-xl border max-w-sm transition-transform hover:scale-[1.01]"
+          style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+          title="Click to view full image"
+        >
+          <img
+            src={attachment.dataUrl}
+            alt={attachment.name}
+            className="max-h-60 w-auto object-cover rounded-xl"
+            loading="lazy"
+          />
+          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-medium">
+            Click to view full
+          </div>
+        </a>
+        <div className="flex items-center gap-1.5 text-[11px] opacity-75">
+          <span className="truncate max-w-[200px]">{attachment.name}</span>
+          <span>&middot;</span>
+          <span>{formatFileSize(attachment.size)}</span>
+          {attachment.trained && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium">
+              <CheckCircle2 size={10} /> Learned
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="rounded-xl border p-2.5 mb-2 transition-colors text-xs w-full max-w-md"
+      style={{
+        background: 'var(--color-bg-tertiary)',
+        borderColor: 'var(--color-border)',
+        color: 'var(--color-text)',
+      }}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="p-1.5 rounded-lg bg-black/10 shrink-0">
+            {attachment.type === 'code' ? (
+              <FileCode size={16} className="text-blue-400" />
+            ) : (
+              <FileText size={16} className="text-amber-400" />
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="font-medium truncate max-w-[240px]" title={attachment.name}>
+              {attachment.name}
+            </div>
+            <div className="text-[11px] text-[var(--color-text-tertiary)] flex items-center gap-1.5">
+              <span>{formatFileSize(attachment.size)}</span>
+              {attachment.content && (
+                <>
+                  <span>&middot;</span>
+                  <span>{attachment.content.length.toLocaleString()} chars</span>
+                </>
+              )}
+              {attachment.trained && (
+                <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-medium ml-1">
+                  <CheckCircle2 size={9} /> Learned
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        {attachment.content && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="p-1 rounded hover:bg-black/10 text-[var(--color-text-tertiary)] hover:text-[var(--color-text)] transition-colors shrink-0 cursor-pointer"
+            title={expanded ? 'Hide content' : 'View extracted content'}
+          >
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+        )}
+      </div>
+
+      {expanded && attachment.content && (
+        <div className="mt-2 pt-2 border-t border-[var(--color-border)] max-h-48 overflow-y-auto font-mono text-[11px] leading-relaxed whitespace-pre-wrap rounded bg-black/15 p-2 text-[var(--color-text-secondary)]">
+          {attachment.content}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MessageBubble({ message, isLive = false }: Props) {
   const isUser = message.role === 'user';
 
@@ -118,20 +217,43 @@ export function MessageBubble({ message, isLive = false }: Props) {
   }, [sourcesMap]);
 
   if (isUser) {
+    const hasAttachments =
+      (message.attachments && message.attachments.length > 0) ||
+      (message.images && message.images.length > 0);
+
     return (
-      <div className="flex justify-end mb-4">
-        <div
-          className="max-w-[85%] px-4 py-2.5 text-sm leading-relaxed"
-          style={{
-            background: 'var(--color-user-bubble)',
-            color: 'var(--color-user-bubble-text)',
-            borderRadius: 'var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl)',
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}
-        >
-          {message.content}
-        </div>
+      <div className="flex flex-col items-end mb-4">
+        {hasAttachments && (
+          <div className="max-w-[85%] w-full flex flex-col items-end mb-1">
+            {message.attachments?.map((att) => (
+              <AttachmentCard key={att.id} attachment={att} />
+            ))}
+            {!message.attachments?.length &&
+              message.images?.map((img, idx) => (
+                <div key={idx} className="mb-2">
+                  <img
+                    src={img}
+                    alt={`Upload ${idx + 1}`}
+                    className="max-h-60 w-auto object-cover rounded-xl border border-[var(--color-border)]"
+                  />
+                </div>
+              ))}
+          </div>
+        )}
+        {cleanContent && (
+          <div
+            className="max-w-[85%] px-4 py-2.5 text-sm leading-relaxed"
+            style={{
+              background: 'var(--color-user-bubble)',
+              color: 'var(--color-user-bubble-text)',
+              borderRadius: 'var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+          >
+            {cleanContent}
+          </div>
+        )}
       </div>
     );
   }

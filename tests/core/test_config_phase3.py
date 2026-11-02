@@ -37,8 +37,8 @@ class TestAgentConfig:
 class TestServerConfig:
     def test_defaults(self):
         cfg = ServerConfig()
-        assert cfg.host == "127.0.0.1"
-        assert cfg.port == 8000
+        assert cfg.host == "0.0.0.0"
+        assert cfg.port == 10101
         assert cfg.agent == "orchestrator"
         assert cfg.model == ""
         assert cfg.workers == 1

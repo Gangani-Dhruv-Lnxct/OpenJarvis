@@ -113,7 +113,7 @@ class KnowledgeSQLTool(BaseTool):
 
         try:
             rows = self._store._conn.execute(query).fetchmany(_MAX_ROWS)
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, sqlite3.Warning) as exc:
             return ToolResult(
                 tool_name="knowledge_sql",
                 content=f"SQL error: {exc}",

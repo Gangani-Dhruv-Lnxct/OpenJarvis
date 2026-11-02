@@ -12,6 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message, Role, ToolCall
@@ -27,6 +28,8 @@ from openjarvis.server.models import (
     ModelListResponse,
     ModelObject,
     StreamChoice,
+    TranslateRequest,
+    TranslateResponse,
     UsageInfo,
 )
 
@@ -43,6 +46,7 @@ def _to_messages(chat_messages) -> list[Message]:
                 role=role,
                 content=m.content or "",
                 name=m.name,
+                images=getattr(m, "images", None),
                 tool_calls=[
                     ToolCall(
                         id=tool_call.get("id", ""),
@@ -161,8 +165,10 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     engine = request.app.state.engine
     agent = getattr(request.app.state, "agent", None)
     model = request_body.model
+    fast_mode = getattr(request_body, "fast_mode", False)
     use_server_agent = (
         agent is not None
+        and not fast_mode
         and not request_body.tools
         and (not request_body.stream or bool(getattr(agent, "_tools", None)))
     )
@@ -232,6 +238,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                             ]
                             or None,
                             tool_call_id=getattr(msg, "tool_call_id", None),
+                            images=getattr(msg, "images", None),
                         )
                     )
                 request_body.messages = new_msgs
@@ -804,6 +811,22 @@ async def _handle_stream_tools(
     """
     messages = _to_messages(req.messages)
     messages = _ensure_identity_prompt(messages, app_config)
+    if getattr(req, "fast_mode", False):
+        from openjarvis.core.types import Message, Role
+
+        fast_hint = (
+            "\n\n[Fast Response Mode]: Respond directly, concisely, and clearly. "
+            "Do not output internal monologue or thinking tokens. Give the helpful answer immediately."
+        )
+        if messages and messages[0].role == Role.SYSTEM:
+            messages[0] = Message(
+                role=Role.SYSTEM,
+                content=messages[0].content + fast_hint,
+                metadata=messages[0].metadata,
+            )
+        else:
+            messages.insert(0, Message(role=Role.SYSTEM, content=fast_hint.strip()))
+
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     use_cloud = _uses_direct_cloud_router(engine, model)
     telemetry_engine = (
@@ -826,6 +849,13 @@ async def _handle_stream_tools(
         yield f"data: {first_chunk.model_dump_json()}\n\n"
 
         finish_reason = "stop"
+        stream_kwargs: dict = {}
+        if getattr(req, "fast_mode", False):
+            import os
+
+            stream_kwargs["num_ctx"] = 4096
+            stream_kwargs["num_thread"] = os.cpu_count() or 4
+
         try:
             async for sc in engine.stream_full(
                 messages,
@@ -833,6 +863,7 @@ async def _handle_stream_tools(
                 temperature=req.temperature,
                 max_tokens=req.max_tokens,
                 tools=req.tools,
+                **stream_kwargs,
             ):
                 if sc.content:
                     full_content += sc.content
@@ -1147,6 +1178,43 @@ async def list_models(request: Request) -> ModelListResponse:
     )
 
 
+def _resolve_ollama_host(request: Request) -> str | None:
+    """Find the Ollama host, supporting standalone Ollama or MultiEngine with Ollama."""
+    from openjarvis.engine.multi import MultiEngine
+    from openjarvis.security.guardrails import GuardrailsEngine
+
+    engine = getattr(request.app.state, "engine", None)
+    if isinstance(engine, GuardrailsEngine):
+        engine = engine._engine
+
+    engine_name = getattr(request.app.state, "engine_name", "")
+
+    # 1. Direct Ollama engine
+    if engine_name == "ollama" or getattr(engine, "engine_id", "") == "ollama":
+        return getattr(engine, "_host", "http://localhost:11434")
+
+    # 2. MultiEngine containing Ollama
+    if isinstance(engine, MultiEngine):
+        for key, sub_eng in engine._engines:
+            if isinstance(sub_eng, GuardrailsEngine):
+                sub_eng = sub_eng._engine
+            if key == "ollama" or getattr(sub_eng, "engine_id", "") == "ollama":
+                return getattr(sub_eng, "_host", "http://localhost:11434")
+
+    # 3. In multi-engine mode, check if Ollama host is configured or reachable
+    if engine_name == "multi":
+        config = getattr(request.app.state, "config", None)
+        if config and getattr(config, "engine", None):
+            host = getattr(config.engine, "ollama_host", None)
+            if host:
+                return host.rstrip("/")
+        import os
+
+        return os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+
+    return None
+
+
 @router.post("/v1/models/pull")
 async def pull_model(request: Request):
     """Pull / download a model from the Ollama registry."""
@@ -1155,10 +1223,8 @@ async def pull_model(request: Request):
     if not model_name:
         raise HTTPException(status_code=400, detail="'model' field is required")
 
-    engine = request.app.state.engine
-    engine_name = getattr(request.app.state, "engine_name", "")
-    # Only Ollama supports pulling
-    if engine_name != "ollama" and getattr(engine, "engine_id", "") != "ollama":
+    host = _resolve_ollama_host(request)
+    if host is None:
         raise HTTPException(
             status_code=501,
             detail="Model pulling is only supported with the Ollama engine",
@@ -1166,7 +1232,6 @@ async def pull_model(request: Request):
 
     import httpx as _httpx
 
-    host = getattr(engine, "_host", "http://localhost:11434")
     try:
         async with _httpx.AsyncClient(base_url=host, timeout=600.0) as client:
             resp = await client.post(
@@ -1182,20 +1247,31 @@ async def pull_model(request: Request):
             detail=f"Ollama error: {exc.response.text[:300]}",
         )
 
+    # Refresh MultiEngine model map if applicable
+    from openjarvis.engine.multi import MultiEngine
+    from openjarvis.security.guardrails import GuardrailsEngine
+
+    engine = getattr(request.app.state, "engine", None)
+    if isinstance(engine, GuardrailsEngine):
+        engine = engine._engine
+    if isinstance(engine, MultiEngine):
+        try:
+            engine._refresh_map()
+        except Exception:
+            pass
+
     return {"status": "ok", "model": model_name}
 
 
 @router.delete("/v1/models/{model_name:path}")
 async def delete_model(model_name: str, request: Request):
     """Delete a model from Ollama."""
-    engine = request.app.state.engine
-    engine_name = getattr(request.app.state, "engine_name", "")
-    if engine_name != "ollama" and getattr(engine, "engine_id", "") != "ollama":
+    host = _resolve_ollama_host(request)
+    if host is None:
         raise HTTPException(status_code=501, detail="Only supported with Ollama engine")
 
     import httpx as _httpx
 
-    host = getattr(engine, "_host", "http://localhost:11434")
     try:
         async with _httpx.AsyncClient(base_url=host, timeout=30.0) as client:
             resp = await client.request(
@@ -1211,6 +1287,19 @@ async def delete_model(model_name: str, request: Request):
             status_code=exc.response.status_code,
             detail=f"Ollama error: {exc.response.text[:300]}",
         )
+
+    # Refresh MultiEngine model map if applicable
+    from openjarvis.engine.multi import MultiEngine
+    from openjarvis.security.guardrails import GuardrailsEngine
+
+    engine = getattr(request.app.state, "engine", None)
+    if isinstance(engine, GuardrailsEngine):
+        engine = engine._engine
+    if isinstance(engine, MultiEngine):
+        try:
+            engine._refresh_map()
+        except Exception:
+            pass
 
     return {"status": "deleted", "model": model_name}
 
@@ -1468,6 +1557,104 @@ async def security_scan():
             for r in results
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Language Translation endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post("/v1/translate", response_model=TranslateResponse)
+async def translate_text(body: TranslateRequest, request: Request) -> TranslateResponse:
+    """Translate text from English to any target language."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is empty")
+
+    target_lang = body.target_language.strip()
+    source_lang = body.source_language.strip()
+
+    prompt = (
+        f"You are a professional translator. Translate the following text from {source_lang} to {target_lang}. "
+        f"Preserve all meaning, tone, and formatting. Output ONLY the translated text, without commentary, markdown fences, or quotes:\n\n{text}"
+    )
+
+    translated = ""
+    engine = getattr(request.app.state, "engine", None)
+    model = body.model
+
+    if not model and getattr(request.app.state, "config", None):
+        cfg = request.app.state.config
+        model = getattr(cfg.agent, "default_model", None)
+
+    # 1. Try local or cloud inference engine
+    if engine is not None and model:
+        try:
+            from openjarvis.core.types import Message, Role
+            messages = [Message(role=Role.USER, content=prompt)]
+            import os
+
+            resp = await asyncio.to_thread(
+                engine.generate,
+                messages,
+                model=model,
+                temperature=0.1,
+                max_tokens=1024,
+                num_ctx=2048,
+                num_thread=os.cpu_count() or 4,
+            )
+            content = resp.get("content", "")
+            if content:
+                translated = content.strip()
+        except Exception as exc:
+            logging.getLogger("openjarvis.server").debug("Engine translation failed: %s", exc)
+
+    # 2. Public API fallback if engine is offline or model call failed
+    if not translated:
+        try:
+            import urllib.parse
+            import httpx
+
+            iso_lang_map = {
+                "spanish": "es", "hindi": "hi", "gujarati": "gu", "french": "fr",
+                "german": "de", "chinese": "zh", "japanese": "ja", "arabic": "ar",
+                "russian": "ru", "portuguese": "pt", "italian": "it", "korean": "ko",
+                "bengali": "bn", "tamil": "ta", "telugu": "te", "marathi": "mr",
+                "urdu": "ur", "turkish": "tr", "dutch": "nl", "vietnamese": "vi",
+                "indonesian": "id", "thai": "th", "ukrainian": "uk", "polish": "pl",
+                "greek": "el", "swedish": "sv", "hebrew": "he", "latin": "la",
+            }
+            cleaned_target = target_lang.lower().split()[0].strip()
+            lang_code = iso_lang_map.get(cleaned_target, cleaned_target[:2])
+            encoded = urllib.parse.quote(text[:500])
+            url = f"https://api.mymemory.translated.net/get?q={encoded}&langpair=en|{lang_code}"
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                res = await client.get(url)
+                if res.is_success:
+                    data = res.json()
+                    match = data.get("responseData", {}).get("translatedText")
+                    if match and match != "NO QUERY SPECIFIED" and match.strip().lower() != text.strip().lower():
+                        translated = match.strip()
+                    elif data.get("matches"):
+                        for m in data.get("matches", []):
+                            cand = (m.get("translation") or "").strip()
+                            if cand and cand.lower() != text.strip().lower():
+                                translated = cand
+                                break
+                    if not translated and match and match != "NO QUERY SPECIFIED":
+                        translated = match.strip()
+        except Exception as exc:
+            logging.getLogger("openjarvis.server").debug("Fallback translation failed: %s", exc)
+
+    if not translated:
+        translated = text
+
+    return TranslateResponse(
+        original_text=text,
+        translated_text=translated,
+        target_language=target_lang,
+        source_language=source_lang,
+    )
 
 
 __all__ = ["router"]

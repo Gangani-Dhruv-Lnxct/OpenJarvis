@@ -296,8 +296,11 @@ export async function checkHealth(): Promise<boolean> {
   // reach the backend.
   const probe = async (url: string): Promise<boolean> => {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
-      return res.ok;
+      const apiKey = getApiKey();
+      const headers: Record<string, string> = {};
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      const res = await fetch(url, { cache: 'no-store', headers });
+      return res.ok || res.status === 401 || res.status === 403;
     } catch {
       return false;
     }
@@ -1226,3 +1229,50 @@ export async function setInferenceSource(
 export const stageInferenceSource = (
   src: InferenceSource & { apiKey?: string },
 ): Promise<void> => setInferenceSource(src, { pending: true });
+
+// ---------------------------------------------------------------------------
+// Text Translation (English to All Languages)
+// ---------------------------------------------------------------------------
+
+export interface TranslatePayload {
+  text: string;
+  target_language: string;
+  source_language?: string;
+  model?: string;
+}
+
+export interface TranslateResult {
+  original_text: string;
+  translated_text: string;
+  target_language: string;
+  source_language: string;
+}
+
+export async function translateText(payload: TranslatePayload): Promise<TranslateResult> {
+  const base = getBase();
+  const apiKey = getApiKey();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
+  }
+
+  const res = await fetch(`${base}/v1/translate`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      text: payload.text,
+      target_language: payload.target_language,
+      source_language: payload.source_language || 'English',
+      model: payload.model,
+    }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(errorText || `Translation request failed (HTTP ${res.status})`);
+  }
+
+  return res.json();
+}

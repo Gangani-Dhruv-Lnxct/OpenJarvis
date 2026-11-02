@@ -506,3 +506,30 @@ class TestOllamaStreamHttpErrorMapping:
         # First request had tools (400), second retried without them (200).
         assert calls == [True, False]
         assert any(c.content == "recovered" for c in chunks)
+
+    def test_ollama_engine_api_key_header(self) -> None:
+        engine = OllamaEngine(host="http://localhost:11434", api_key="secret-key")
+        assert engine._headers == {"Authorization": "Bearer secret-key"}
+        assert engine._client.headers.get("authorization") == "Bearer secret-key"
+
+    @pytest.mark.asyncio
+    async def test_ollama_engine_401_error_guidance(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, text='{"error":"Unauthorized"}')
+
+        engine = OllamaEngine(host="http://localhost:11434")
+        engine._async_transport = httpx.MockTransport(handler)
+
+        from openjarvis.engine._base import EngineConnectionError
+
+        with pytest.raises(EngineConnectionError) as exc_info:
+            async for _ in engine.stream(
+                [Message(role=Role.USER, content="hi")],
+                model="nemotron-3-super:cloud",
+            ):
+                pass
+        err_msg = str(exc_info.value)
+        assert "401" in err_msg
+        assert "ollama login" in err_msg
+        assert "nemotron-3-super:cloud" in err_msg
+

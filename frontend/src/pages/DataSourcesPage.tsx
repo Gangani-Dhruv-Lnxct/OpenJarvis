@@ -881,14 +881,18 @@ function DataSourcesSection() {
 
   useEffect(() => {
     void loadConnectors();
-    const interval = setInterval(() => void loadConnectors(), 10000);
+    const interval = setInterval(() => {
+      if (!document.hidden) void loadConnectors();
+    }, 15000);
     return () => clearInterval(interval);
   }, [loadConnectors]);
 
   useEffect(() => {
     if (connectors.some((c) => c.connected)) {
       loadSyncStatuses();
-      const interval = setInterval(loadSyncStatuses, 5000);
+      const interval = setInterval(() => {
+        if (!document.hidden) loadSyncStatuses();
+      }, 15000);
       return () => clearInterval(interval);
     }
   }, [connectors, loadSyncStatuses]);

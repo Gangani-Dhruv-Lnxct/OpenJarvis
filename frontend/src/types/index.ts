@@ -115,11 +115,25 @@ export interface LiveEnergyMetrics {
   duration_s: number;
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  size: number;
+  type: 'image' | 'file' | 'code';
+  ext: string;
+  dataUrl?: string;
+  content?: string;
+  preview?: string;
+  trained?: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  attachments?: ChatAttachment[];
+  images?: string[];
   toolCalls?: ToolCallInfo[];
   researchTraces?: ResearchSearchTrace[];
   researchSources?: ResearchSource[];

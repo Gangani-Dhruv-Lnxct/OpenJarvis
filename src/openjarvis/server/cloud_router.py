@@ -115,7 +115,16 @@ def _to_openai_msgs(messages: Sequence[Message]) -> list[dict[str, Any]]:
     out = []
     for m in messages:
         role = m.role.value if hasattr(m.role, "value") else str(m.role)
-        out.append({"role": role, "content": m.content or ""})
+        if getattr(m, "images", None) and role == "user":
+            parts: list[dict[str, Any]] = []
+            if m.content:
+                parts.append({"type": "text", "text": m.content})
+            for img in m.images:
+                url = img if img.startswith("data:") else f"data:image/jpeg;base64,{img}"
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+            out.append({"role": role, "content": parts})
+        else:
+            out.append({"role": role, "content": m.content or ""})
     return out
 
 
@@ -132,7 +141,27 @@ def _to_anthropic_msgs(
         else:
             # Anthropic only allows "user" and "assistant"
             ar = "user" if role != "assistant" else "assistant"
-            chat.append({"role": ar, "content": m.content or ""})
+            if getattr(m, "images", None) and ar == "user":
+                parts: list[dict[str, Any]] = []
+                for img in m.images:
+                    media_type = "image/jpeg"
+                    data = img
+                    if img.startswith("data:"):
+                        header, data = img.split(",", 1)
+                        media_type = header.split(";")[0].replace("data:", "")
+                    parts.append({
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": data,
+                        },
+                    })
+                if m.content:
+                    parts.append({"type": "text", "text": m.content})
+                chat.append({"role": ar, "content": parts})
+            else:
+                chat.append({"role": ar, "content": m.content or ""})
     return system_text, chat
 
 
@@ -141,15 +170,29 @@ def _to_google_contents(messages: Sequence[Message]) -> list[dict[str, Any]]:
     contents = []
     for m in messages:
         role = m.role.value if hasattr(m.role, "value") else str(m.role)
+        parts: list[dict[str, Any]] = []
+        if getattr(m, "images", None) and role in ("user", "system"):
+            for img in m.images:
+                mime = "image/jpeg"
+                data = img
+                if img.startswith("data:"):
+                    header, data = img.split(",", 1)
+                    mime = header.split(";")[0].replace("data:", "")
+                parts.append({"inline_data": {"mime_type": mime, "data": data}})
+        if m.content:
+            parts.append({"text": m.content})
+        elif not parts:
+            parts.append({"text": ""})
+
         if role == "system":
             # Gemini doesn't have a system role in the contents array;
             # prepend as a user message.
-            contents.append({"role": "user", "parts": [{"text": m.content or ""}]})
+            contents.append({"role": "user", "parts": parts})
             contents.append({"role": "model", "parts": [{"text": "Understood."}]})
         elif role == "assistant":
-            contents.append({"role": "model", "parts": [{"text": m.content or ""}]})
+            contents.append({"role": "model", "parts": parts})
         else:
-            contents.append({"role": "user", "parts": [{"text": m.content or ""}]})
+            contents.append({"role": "user", "parts": parts})
     return contents
 
 
@@ -329,8 +372,26 @@ async def stream_local(
         },
     }
     host = _ollama_host()
-    async with httpx.AsyncClient(timeout=300) as client:
+    headers = {}
+    api_key = os.environ.get("OLLAMA_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    async with httpx.AsyncClient(timeout=300, headers=headers) as client:
         async with client.stream("POST", f"{host}/api/chat", json=payload) as resp:
+            if resp.status_code == 401:
+                await resp.aread()
+                hint = ""
+                if ":cloud" in model:
+                    hint = (
+                        f" (The model '{model}' is an Ollama Cloud model requiring authentication. "
+                        "Run 'ollama login' in terminal to sign in, or select a local model like 'qwen3.5:4b' or 'llama3.2:latest')"
+                    )
+                else:
+                    hint = (
+                        " (Ollama returned 401 Unauthorized. Set OLLAMA_API_KEY if required, "
+                        "or select a local model like 'qwen3.5:4b' or 'llama3.2:latest')"
+                    )
+                raise RuntimeError(f"Ollama returned HTTP 401 Unauthorized{hint}")
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line:

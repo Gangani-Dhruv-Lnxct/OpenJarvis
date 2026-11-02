@@ -35,3 +35,24 @@ class TestSetupLogging:
         for h in logger.handlers[:]:
             logger.removeHandler(h)
             h.close()
+
+    def test_setup_server_logging(self, tmp_path):
+        from openjarvis.cli.log_config import setup_server_logging
+
+        log_paths = setup_server_logging(log_dir=tmp_path)
+        assert log_paths["server"] == tmp_path / "server.log"
+        assert log_paths["error"] == tmp_path / "error.log"
+        assert log_paths["server"].parent.exists()
+
+        # Check handlers attached to openjarvis and uvicorn
+        srv_logger = logging.getLogger("openjarvis.server")
+        handlers = [h for h in srv_logger.handlers if hasattr(h, "baseFilename")]
+        assert len(handlers) >= 2
+        srv_logger.info("Test server log entry")
+        srv_logger.error("Test server error entry")
+
+        # Clean up
+        for h in srv_logger.handlers[:]:
+            srv_logger.removeHandler(h)
+            h.close()
+

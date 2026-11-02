@@ -10,17 +10,17 @@ import pytest
 class TestServerConfigDefaults:
     """ServerConfig should bind to loopback by default."""
 
-    def test_default_host_is_loopback(self) -> None:
+    def test_default_host(self) -> None:
         from openjarvis.core.config import ServerConfig
 
         cfg = ServerConfig()
-        assert cfg.host == "127.0.0.1"
+        assert cfg.host == "0.0.0.0"
 
-    def test_default_port_unchanged(self) -> None:
+    def test_default_port(self) -> None:
         from openjarvis.core.config import ServerConfig
 
         cfg = ServerConfig()
-        assert cfg.port == 8000
+        assert cfg.port == 10101
 
     def test_cors_origins_default(self) -> None:
         from openjarvis.core.config import ServerConfig

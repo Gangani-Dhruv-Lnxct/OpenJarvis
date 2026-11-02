@@ -20,7 +20,7 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export function ApprovalBell() {
+export function ApprovalBell({ className = '' }: { className?: string } = {}) {
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -75,25 +75,31 @@ export function ApprovalBell() {
   const count = approvals.length;
 
   return (
-    <div ref={containerRef} className="fixed top-2 right-3 z-40">
+    <div ref={containerRef} className={className || 'relative'}>
       {/* Bell trigger */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="relative p-2 rounded-lg transition-colors cursor-pointer"
-        title="Agent approvals"
+        className="relative h-8 w-8 flex items-center justify-center rounded-lg transition-all cursor-pointer border shadow-xs"
+        title={count > 0 ? `Agent approvals (${count} pending)` : 'Agent approvals'}
+        aria-label="Agent approvals"
         style={{
-          color: count > 0 ? 'var(--color-text)' : 'var(--color-text-secondary)',
+          color: count > 0 ? 'var(--color-error)' : 'var(--color-text-secondary)',
           background: open
             ? 'var(--color-bg-tertiary)'
             : count > 0
-            ? 'color-mix(in srgb, var(--color-error) 8%, transparent)'
-            : 'transparent',
+            ? 'color-mix(in srgb, var(--color-error) 10%, var(--color-bg-secondary))'
+            : 'var(--color-bg-secondary)',
+          borderColor: open
+            ? 'var(--color-accent)'
+            : count > 0
+            ? 'color-mix(in srgb, var(--color-error) 40%, var(--color-border))'
+            : 'var(--color-border)',
         }}
       >
-        <Bell size={17} />
+        <Bell size={16} />
         {count > 0 && (
           <span
-            className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center rounded-full text-[10px] font-bold px-1 leading-none"
+            className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center rounded-full text-[10px] font-bold px-1 leading-none shadow-xs"
             style={{ background: 'var(--color-error)', color: '#fff' }}
           >
             {count > 99 ? '99+' : count}
@@ -104,7 +110,7 @@ export function ApprovalBell() {
       {/* Dropdown */}
       {open && (
         <div
-          className="absolute right-0 top-full mt-1 rounded-xl shadow-2xl overflow-hidden flex flex-col"
+          className="absolute right-0 top-full mt-1.5 rounded-xl shadow-2xl overflow-hidden flex flex-col z-50"
           style={{
             width: '340px',
             maxHeight: '500px',

@@ -104,6 +104,26 @@ class TestModelPull:
 
         assert resp.status_code == 502
 
+    def test_pull_multi_engine_success(self):
+        from openjarvis.engine.multi import MultiEngine
+
+        ollama_engine = _make_ollama_engine()
+        multi_engine = MultiEngine([("ollama", ollama_engine)])
+        client = TestClient(_app(multi_engine, engine_name="multi"))
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as MockClient:
+            instance = MockClient.return_value.__aenter__.return_value
+            instance.post = AsyncMock(return_value=mock_resp)
+
+            resp = client.post("/v1/models/pull", json={"model": "qwen3.5:4b"})
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+
 
 # ---------------------------------------------------------------------------
 # Model delete endpoint

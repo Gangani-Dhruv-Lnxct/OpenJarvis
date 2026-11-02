@@ -30,6 +30,9 @@ class DaemonServer(uvicorn.Server):
 
 
 def run_server(app: Any, *, host: str, port: int, log_level: str = "info") -> None:
+    from openjarvis.cli.log_config import setup_server_logging
+
+    setup_server_logging(log_level=log_level)
     server = DaemonServer(
         uvicorn.Config(app, host=host, port=port, log_level=log_level)
     )

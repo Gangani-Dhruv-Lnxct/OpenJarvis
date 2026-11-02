@@ -692,7 +692,10 @@ def serve(
     api_key = _os.environ.get("OPENJARVIS_API_KEY", "")
     if not api_key:
         try:
-            import tomllib
+            try:
+                import tomllib
+            except ModuleNotFoundError:
+                import tomli as tomllib  # type: ignore[no-redef]
 
             _cfg_path = str(get_config_dir() / "config.toml")
             with open(_cfg_path, "rb") as _f:
@@ -773,12 +776,17 @@ def serve(
         cors_origins=cors_origins,
     )
 
+    from openjarvis.cli.log_config import setup_server_logging
+
+    log_info = setup_server_logging()
+
     console.print(
         f"[green]Starting OpenJarvis API server[/green]\n"
         f"  Engine: [cyan]{engine_name}[/cyan]\n"
         f"  Model:  [cyan]{model_name}[/cyan]\n"
         f"  Agent:  [cyan]{agent_key or 'none'}[/cyan]\n"
-        f"  URL:    [cyan]http://{bind_host}:{bind_port}[/cyan]"
+        f"  URL:    [cyan]http://{bind_host}:{bind_port}[/cyan]\n"
+        f"  Logs:   [cyan]{log_info['server']}[/cyan]"
     )
 
     # Warn about wildcard CORS on non-loopback

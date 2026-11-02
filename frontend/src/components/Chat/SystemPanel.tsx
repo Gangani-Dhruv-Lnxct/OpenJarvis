@@ -8,12 +8,12 @@ import {
   Cloud,
   HardDrive,
   Hash,
-  X,
   Trophy,
   ExternalLink,
 } from 'lucide-react';
 import { useAppStore } from '../../lib/store';
 import { getBase } from '../../lib/api';
+import { TranslationWidget } from './TranslationWidget';
 
 interface EnergyData {
   total_energy_j?: number;
@@ -36,7 +36,6 @@ const CLOUD_PRICING = [
 
 export function SystemPanel() {
   const savings = useAppStore((s) => s.savings);
-  const toggleSystemPanel = useAppStore((s) => s.toggleSystemPanel);
   const optInEnabled = useAppStore((s) => s.optInEnabled);
   const setOptInModalOpen = useAppStore((s) => s.setOptInModalOpen);
   const liveEnergy = useAppStore((s) => s.liveEnergy);
@@ -63,7 +62,11 @@ export function SystemPanel() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 3000);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        fetchData();
+      }
+    }, 15000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -87,20 +90,17 @@ export function SystemPanel() {
     >
       {/* Header */}
       <div
-        className="flex items-center justify-between px-4 py-3 shrink-0"
+        className="flex items-center justify-between px-4 py-2.5 shrink-0 h-11"
         style={{ borderBottom: '1px solid var(--color-border)' }}
       >
-        <span className="text-xs font-semibold tracking-wide uppercase" style={{ color: 'var(--color-text-secondary)' }}>
-          System
-        </span>
-        <button
-          onClick={toggleSystemPanel}
-          className="p-1 rounded-md transition-colors cursor-pointer"
-          style={{ color: 'var(--color-text-tertiary)' }}
-          title="Close panel"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-2 min-w-0">
+          <Activity size={14} style={{ color: 'var(--color-accent)' }} />
+          <span className="text-xs font-semibold tracking-wide uppercase truncate" style={{ color: 'var(--color-text-secondary)' }}>
+            System Telemetry
+          </span>
+        </div>
+        {/* Spacer reserved for TopHeaderActions controls */}
+        <div className="w-28 shrink-0" aria-hidden="true" />
       </div>
 
       <div className="flex flex-col gap-4 p-4">
@@ -269,6 +269,9 @@ export function SystemPanel() {
             View Leaderboard
           </a>
         </section>
+
+        {/* Translation: English to All Languages */}
+        <TranslationWidget />
       </div>
     </div>
   );

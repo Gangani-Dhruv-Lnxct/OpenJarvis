@@ -100,7 +100,7 @@ if not _DATA_BOUNDARY_BOOTSTRAP:
     from openjarvis.cli._bootstrap import bootstrap_cmd
     from openjarvis.cli.add_cmd import add
     from openjarvis.cli.agent_cmd import agent
-    from openjarvis.cli.ask import ask
+    from openjarvis.cli.ask import ask as ask_cmd
     from openjarvis.cli.bench_cmd import bench
     from openjarvis.cli.channel_cmd import channel
     from openjarvis.cli.channels_cmd import channels
@@ -119,7 +119,7 @@ if not _DATA_BOUNDARY_BOOTSTRAP:
     from openjarvis.cli.init_cmd import init
     from openjarvis.cli.memory_cmd import memory
     from openjarvis.cli.mine_cmd import mine
-    from openjarvis.cli.model import model
+    from openjarvis.cli.model import model as model_cmd
     from openjarvis.cli.operators_cmd import operators
     from openjarvis.cli.optimize_cmd import optimize_group
     from openjarvis.cli.pearl_cmd import pearl
@@ -127,7 +127,7 @@ if not _DATA_BOUNDARY_BOOTSTRAP:
     from openjarvis.cli.registry_cmd import registry
     from openjarvis.cli.scheduler_cmd import scheduler
     from openjarvis.cli.self_update_cmd import self_update
-    from openjarvis.cli.serve import serve
+    from openjarvis.cli.serve import serve as serve_cmd
     from openjarvis.cli.skill_cmd import skill
     from openjarvis.cli.telemetry_cmd import telemetry
     from openjarvis.cli.tool_cmd import tool
@@ -135,10 +135,10 @@ if not _DATA_BOUNDARY_BOOTSTRAP:
     from openjarvis.cli.workflow_cmd import workflow
 
     cli.add_command(init, "init")
-    cli.add_command(ask, "ask")
+    cli.add_command(ask_cmd, "ask")
     cli.add_command(chat, "chat")
-    cli.add_command(serve, "serve")
-    cli.add_command(model, "model")
+    cli.add_command(serve_cmd, "serve")
+    cli.add_command(model_cmd, "model")
     cli.add_command(memory, "memory")
     cli.add_command(mine, "mine")
     cli.add_command(pearl, "pearl")

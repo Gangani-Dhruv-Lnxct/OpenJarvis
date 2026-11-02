@@ -120,3 +120,29 @@ def get_cache_dir() -> Path:
     directory instead of scattering across ``~/.cache``.
     """
     return get_config_dir() / "cache"
+
+
+def get_logs_dir() -> Path:
+    """Resolve directory for application and service logs.
+
+    Precedence:
+    1. ``$OPENJARVIS_LOG_DIR`` env override.
+    2. ``<source_root>/logs`` if running from source checkout / repo.
+    3. ``<config_dir>/logs`` as standard fallback.
+    """
+    env_logs = os.environ.get("OPENJARVIS_LOG_DIR")
+    if env_logs:
+        p = Path(env_logs).expanduser().resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    source_root = _find_source_root()
+    if source_root is not None:
+        p = (source_root / "logs").resolve()
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    p = get_config_dir() / "logs"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+

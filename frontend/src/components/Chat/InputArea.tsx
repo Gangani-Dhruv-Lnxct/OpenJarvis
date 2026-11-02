@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Square, Paperclip, Search } from 'lucide-react';
+import { Send, Square, Paperclip, Search, X, FileText, FileCode, Brain, Sparkles, Loader2, UploadCloud, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
@@ -12,7 +12,13 @@ import {
 } from '../../lib/chat-telemetry';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
+import {
+  processFileForChat,
+  trainFilesIntoKnowledge,
+  formatFileSize,
+} from '../../lib/attachments';
 import type {
+  ChatAttachment,
   ChatMessage,
   MessageTelemetry,
   ResearchSearchTrace,
@@ -69,7 +75,11 @@ function useResearchCorpusSync(enabled: boolean): {
     };
 
     poll();
-    const interval = setInterval(poll, 5000);
+    const interval = setInterval(() => {
+      if (!document.hidden) {
+        poll();
+      }
+    }, 20000);
     return () => {
       cancelled = true;
       clearInterval(interval);
@@ -81,6 +91,20 @@ function useResearchCorpusSync(enabled: boolean): {
 
 export function InputArea() {
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [rawFiles, setRawFiles] = useState<File[]>([]);
+  const [autoTrain, setAutoTrain] = useState(false);
+  const [isTraining, setIsTraining] = useState(false);
+  const [fastMode, setFastMode] = useState<boolean>(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        return window.localStorage.getItem('openjarvis-fast-mode') !== 'false';
+      }
+    } catch {}
+    return true;
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -110,6 +134,106 @@ export function InputArea() {
     startRecording,
     stopRecording,
   } = useSpeech();
+
+  const handleFilesAdded = useCallback(async (files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    const toastId = toast.loading(`Processing ${fileArray.length} file(s)...`);
+    try {
+      const processed: ChatAttachment[] = [];
+      const validFiles: File[] = [];
+
+      for (const file of fileArray) {
+        const att = await processFileForChat(file);
+        processed.push(att);
+        validFiles.push(file);
+      }
+
+      setAttachments((prev) => [...prev, ...processed]);
+      setRawFiles((prev) => [...prev, ...validFiles]);
+      toast.success(`Attached ${processed.length} file(s)`, { id: toastId });
+    } catch (err: any) {
+      toast.error(`Failed to process files: ${err.message || err}`, { id: toastId });
+    }
+  }, []);
+
+  const handleManualTrain = useCallback(async () => {
+    if (rawFiles.length === 0) return;
+    setIsTraining(true);
+    const toastId = toast.loading(`Training model with ${rawFiles.length} file(s)...`);
+    try {
+      const res = await trainFilesIntoKnowledge(rawFiles);
+      setAttachments((prev) => prev.map((a) => ({ ...a, trained: true })));
+      toast.success(`Learned & indexed ${res.chunks_added} chunks into Knowledge Base!`, { id: toastId });
+    } catch (err: any) {
+      toast.error(`Training failed: ${err.message || err}`, { id: toastId });
+    } finally {
+      setIsTraining(false);
+    }
+  }, [rawFiles]);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => {
+      const idx = prev.findIndex((a) => a.id === id);
+      if (idx !== -1) {
+        setRawFiles((rf) => rf.filter((_, i) => i !== idx));
+      }
+      return prev.filter((a) => a.id !== id);
+    });
+  }, []);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+      e.preventDefault();
+      handleFilesAdded(e.clipboardData.files);
+    }
+  }, [handleFilesAdded]);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFilesAdded(e.dataTransfer.files);
+    }
+  }, [handleFilesAdded]);
+
+  useEffect(() => {
+    const onDropped = (e: Event) => {
+      const custom = e as CustomEvent<File[]>;
+      if (custom.detail && custom.detail.length > 0) {
+        handleFilesAdded(custom.detail);
+      }
+    };
+    window.addEventListener('chat-files-dropped', onDropped);
+    return () => window.removeEventListener('chat-files-dropped', onDropped);
+  }, [handleFilesAdded]);
+
+  useEffect(() => {
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+        const activeTag = document.activeElement?.tagName.toLowerCase();
+        if (activeTag !== 'input' && document.activeElement !== textareaRef.current) {
+          handleFilesAdded(e.clipboardData.files);
+        }
+      }
+    };
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => window.removeEventListener('paste', handleGlobalPaste);
+  }, [handleFilesAdded]);
 
   // Abort in-flight stream when the user switches models mid-generation.
   // This prevents errors from trying to continue a stream with a stale model.
@@ -173,33 +297,78 @@ export function InputArea() {
 
   const sendMessage = useCallback(async () => {
     const content = input.trim();
-    if (!content || streamState.isStreaming) return;
+    if ((!content && attachments.length === 0) || streamState.isStreaming) return;
     if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
 
+    const currentAttachments = [...attachments];
+    const currentRawFiles = [...rawFiles];
     setInput('');
+    setAttachments([]);
+    setRawFiles([]);
 
     let convId = activeId;
     if (!convId) {
       convId = createConversation(selectedModel);
     }
 
+    const imageList = currentAttachments
+      .filter((a) => a.type === 'image' && a.dataUrl)
+      .map((a) => a.dataUrl!);
+
+    const textAttachments = currentAttachments.filter((a) => a.content);
+    let promptWithContext = content;
+    if (textAttachments.length > 0) {
+      const docsContext = textAttachments
+        .map((a) => `[Attached Document: ${a.name}]\n\`\`\`\n${a.content}\n\`\`\``)
+        .join('\n\n');
+      promptWithContext = `${docsContext}\n\n${content || 'Please read, analyze, and explain the attached documents.'}`;
+    } else if (!content && imageList.length > 0) {
+      promptWithContext = 'Please inspect and describe this image in detail.';
+    }
+
+    // Auto-train in background if enabled
+    if (autoTrain && currentRawFiles.length > 0) {
+      trainFilesIntoKnowledge(currentRawFiles)
+        .then((res) => {
+          toast.success(`Trained model: ${res.chunks_added} chunks added to Knowledge Base`);
+        })
+        .catch((err) => {
+          toast.error(`Knowledge training error: ${err.message}`);
+        });
+    }
+
     const userMsg: ChatMessage = {
       id: generateId(),
       role: 'user',
-      content,
+      content: content || (textAttachments.length > 0 ? `Attached file(s): ${textAttachments.map((t) => t.name).join(', ')}` : 'Attached image'),
       timestamp: Date.now(),
+      attachments: currentAttachments.map((a) => ({
+        ...a,
+        trained: autoTrain || a.trained,
+      })),
+      images: imageList.length > 0 ? imageList : undefined,
     };
     addMessage(convId, userMsg);
 
     // Build API messages before adding assistant placeholder
     const currentMessages = useAppStore.getState().messages;
-    const apiMessages = currentMessages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const apiMessages = currentMessages.map((m) => {
+      if (m.id === userMsg.id) {
+        return {
+          role: m.role,
+          content: promptWithContext,
+          images: m.images,
+        };
+      }
+      return {
+        role: m.role,
+        content: m.content,
+        images: m.images,
+      };
+    });
 
     const assistantMsg: ChatMessage = {
       id: generateId(),
@@ -214,7 +383,7 @@ export function InputArea() {
     const startTime = Date.now();
     const timer = setInterval(() => {
       setStreamState({ elapsedMs: Date.now() - startTime });
-    }, 100);
+    }, 250);
     timerRef.current = timer;
 
     const controller = new AbortController();
@@ -376,7 +545,14 @@ export function InputArea() {
         }
       } else {
       for await (const sseEvent of streamChat(
-        { model: selectedModel, messages: apiMessages, stream: true, temperature, max_tokens: maxTokens },
+        {
+          model: selectedModel,
+          messages: apiMessages,
+          stream: true,
+          temperature,
+          max_tokens: maxTokens,
+          fast_mode: fastMode,
+        },
         controller.signal,
       )) {
         const eventName = sseEvent.event;
@@ -439,7 +615,7 @@ export function InputArea() {
               setStreamState({ content: accumulatedContent, phase: '' });
 
               const now = Date.now();
-              if (now - lastFlush >= 80) {
+              if (now - lastFlush >= 25 || !lastFlush) {
                 updateLastAssistant(
                   convId,
                   accumulatedContent,
@@ -541,6 +717,9 @@ export function InputArea() {
     }
   }, [
     input,
+    attachments,
+    rawFiles,
+    autoTrain,
     activeId,
     selectedModel,
     streamState.isStreaming,
@@ -561,10 +740,48 @@ export function InputArea() {
     }
   };
 
+  const hasContentToSend = !!input.trim() || attachments.length > 0;
+
   return (
-    <div className="px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
-      <div className="mb-2 flex flex-col gap-1">
-        <div className="flex items-center gap-2">
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="relative px-4 pb-4 pt-2"
+      style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          if (e.target.files) handleFilesAdded(e.target.files);
+          e.target.value = '';
+        }}
+      />
+
+      {isDragging && (
+        <div
+          className="absolute inset-0 z-50 rounded-2xl flex flex-col items-center justify-center gap-2 m-2 pointer-events-none"
+          style={{
+            background: 'var(--color-surface)',
+            border: '2px dashed var(--color-accent)',
+            boxShadow: 'var(--shadow-lg)',
+          }}
+        >
+          <UploadCloud size={36} className="text-[var(--color-accent)] animate-bounce" />
+          <div className="text-sm font-semibold text-[var(--color-text)]">
+            Drop files or images here
+          </div>
+          <div className="text-xs text-[var(--color-text-tertiary)]">
+            They will be read in chat and can be trained into Knowledge Base
+          </div>
+        </div>
+      )}
+
+      <div className="mb-2 flex flex-col gap-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
             onClick={() => setDeepResearch(!deepResearch)}
@@ -581,7 +798,50 @@ export function InputArea() {
             <Search size={12} />
             Deep Research
           </button>
+
+          <button
+            type="button"
+            onClick={() => setAutoTrain(!autoTrain)}
+            aria-pressed={autoTrain}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-all cursor-pointer"
+            style={{
+              background: autoTrain ? 'rgba(16, 185, 129, 0.12)' : 'transparent',
+              border: `1px solid ${autoTrain ? 'rgb(16, 185, 129)' : 'var(--color-border)'}`,
+              color: autoTrain ? 'rgb(16, 185, 129)' : 'var(--color-text-tertiary)',
+            }}
+            title={autoTrain ? 'Auto-Train: ON (Files are indexed into OpenJarvis permanent knowledge base)' : 'Auto-Train: OFF'}
+          >
+            <Brain size={12} />
+            <span>Train Model: {autoTrain ? 'ON' : 'OFF'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setFastMode((prev) => {
+                const next = !prev;
+                try {
+                  localStorage.setItem('openjarvis-fast-mode', String(next));
+                } catch {}
+                return next;
+              });
+            }}
+            disabled={streamState.isStreaming}
+            aria-pressed={fastMode}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-all cursor-pointer"
+            style={{
+              background: fastMode ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
+              border: `1px solid ${fastMode ? 'var(--color-accent)' : 'var(--color-border)'}`,
+              color: fastMode ? 'var(--color-accent)' : 'var(--color-text-tertiary)',
+              fontWeight: fastMode ? 600 : 400,
+            }}
+            title={fastMode ? '⚡ Fast Response: ON (Direct CPU-accelerated token streaming with minimal latency)' : '⚡ Fast Response: OFF'}
+          >
+            <Zap size={12} style={{ color: fastMode ? 'var(--color-accent)' : 'inherit' }} />
+            <span>Fast Response: {fastMode ? 'ON' : 'OFF'}</span>
+          </button>
         </div>
+
         {deepResearch && corpusSync.syncing && corpusSync.itemsSynced > 0 && (
           <div
             className="text-[11px] leading-snug"
@@ -595,6 +855,86 @@ export function InputArea() {
           </div>
         )}
       </div>
+
+      {attachments.length > 0 && (
+        <div
+          className="mb-2 p-2.5 rounded-xl border flex flex-col gap-2 transition-all shadow-sm"
+          style={{
+            background: 'var(--color-bg-secondary)',
+            borderColor: 'var(--color-border)',
+          }}
+        >
+          <div className="flex items-center justify-between text-xs pb-1.5 border-b border-[var(--color-border)]">
+            <span className="font-medium text-[var(--color-text-secondary)] flex items-center gap-1.5">
+              <Sparkles size={13} className="text-cyan-500" />
+              Attached {attachments.length} item(s) to read & train
+            </span>
+            {rawFiles.length > 0 && (
+              <button
+                type="button"
+                onClick={handleManualTrain}
+                disabled={isTraining}
+                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md text-[11px] font-medium transition-all cursor-pointer disabled:opacity-50"
+                style={{
+                  background: 'var(--color-accent-subtle)',
+                  color: 'var(--color-accent)',
+                  border: '1px solid var(--color-accent)',
+                }}
+                title="Permanently index and train OpenJarvis with these files right now"
+              >
+                {isTraining ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
+                {isTraining ? 'Training...' : 'Train Model Now'}
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2 pt-0.5">
+            {attachments.map((att) => (
+              <div
+                key={att.id}
+                className="relative group flex items-center gap-2 p-1.5 pr-2 rounded-lg border text-xs"
+                style={{
+                  background: 'var(--color-surface)',
+                  borderColor: 'var(--color-border)',
+                }}
+              >
+                {att.type === 'image' && att.dataUrl ? (
+                  <img
+                    src={att.dataUrl}
+                    alt={att.name}
+                    className="w-8 h-8 rounded object-cover border border-[var(--color-border)]"
+                  />
+                ) : att.type === 'code' ? (
+                  <div className="p-1 rounded bg-blue-500/10 text-blue-500">
+                    <FileCode size={16} />
+                  </div>
+                ) : (
+                  <div className="p-1 rounded bg-amber-500/10 text-amber-500">
+                    <FileText size={16} />
+                  </div>
+                )}
+                <div className="flex flex-col min-w-0 max-w-[150px]">
+                  <span className="truncate font-medium text-[var(--color-text)]" title={att.name}>
+                    {att.name}
+                  </span>
+                  <span className="text-[10px] text-[var(--color-text-tertiary)] flex items-center gap-1">
+                    {formatFileSize(att.size)}
+                    {att.trained && <span className="text-emerald-500 font-semibold">✓ Learned</span>}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(att.id)}
+                  className="p-1 rounded-full hover:bg-black/10 text-[var(--color-text-tertiary)] hover:text-red-500 transition-colors cursor-pointer"
+                  title="Remove"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div
         className="flex items-center gap-2 rounded-2xl px-4 py-3 transition-shadow"
         style={{
@@ -608,7 +948,14 @@ export function InputArea() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
+          onPaste={handlePaste}
+          placeholder={
+            selectedModel
+              ? attachments.length > 0
+                ? 'Ask anything about attached files or images...'
+                : 'Message OpenJarvis (paste or attach files/images)...'
+              : 'Pick a model first (⌘K)...'
+          }
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
@@ -625,6 +972,15 @@ export function InputArea() {
           </button>
         ) : (
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={streamState.isStreaming || modelLoading}
+              className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer text-[var(--color-text-tertiary)] hover:text-[var(--color-accent)] hover:bg-[var(--color-accent-subtle)] disabled:opacity-30 disabled:cursor-default"
+              title="Attach files or images (PDF, DOCX, TXT, Images, Code) to read & train"
+            >
+              <Paperclip size={16} />
+            </button>
             <MicButton
               state={speechState}
               onClick={handleMicClick}
@@ -633,12 +989,12 @@ export function InputArea() {
             />
             <button
               onClick={sendMessage}
-              disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
+              disabled={streamState.isStreaming || !hasContentToSend || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
-                background: input.trim() ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
-                color: input.trim() ? 'white' : 'var(--color-text-tertiary)',
+                background: hasContentToSend ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
+                color: hasContentToSend ? 'white' : 'var(--color-text-tertiary)',
               }}
             >
               <Send size={16} />
@@ -646,10 +1002,13 @@ export function InputArea() {
           </div>
         )}
       </div>
-      <div className="flex items-center justify-center mt-2 text-[11px]" style={{ color: 'var(--color-text-tertiary)' }}>
+      <div className="flex items-center justify-between mt-2 text-[11px] px-1" style={{ color: 'var(--color-text-tertiary)' }}>
         <span>
           <kbd className="font-mono">Enter</kbd> to send &middot;{' '}
           <kbd className="font-mono">Shift+Enter</kbd> for new line
+        </span>
+        <span>
+          Attach or drop files to read & train
         </span>
       </div>
     </div>
