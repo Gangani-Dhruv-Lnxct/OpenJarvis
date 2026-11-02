@@ -29,7 +29,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=${WORKSPACE_DIR}
-ExecStart=${UV_BIN} run jarvis serve --host 127.0.0.1 --port 10101
+ExecStart=${UV_BIN} run jarvis serve --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
@@ -63,5 +63,5 @@ echo " Status:   systemctl --user status openjarvis"
 echo " Logs:     ${WORKSPACE_DIR}/logs/ (server.log, service.log, error.log)"
 echo " Restart:  systemctl --user restart openjarvis"
 echo " Stop:     systemctl --user stop openjarvis"
-echo " URL:      http://127.0.0.1:10101"
+echo " URL:      http://127.0.0.1:8000"
 echo "=========================================================="

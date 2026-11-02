@@ -1164,7 +1164,7 @@ class ServerConfig:
     """API server settings."""
 
     host: str = "0.0.0.0"
-    port: int = 10101
+    port: int = 8000
     agent: str = "orchestrator"
     model: str = ""
     workers: int = 1
