@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildWsProtocols, buildWsUrl } from './useAgentEvents';
 
@@ -17,11 +17,13 @@ class MemoryStorage {
 }
 
 beforeEach(() => {
+  vi.stubEnv('VITE_OPENJARVIS_API_KEY', '');
   (globalThis as unknown as { localStorage: MemoryStorage }).localStorage =
     new MemoryStorage();
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   (globalThis as unknown as { localStorage?: MemoryStorage }).localStorage =
     undefined;
 });

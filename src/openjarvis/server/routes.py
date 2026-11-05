@@ -1178,8 +1178,8 @@ async def list_models(request: Request) -> ModelListResponse:
     )
 
 
-def _resolve_ollama_host(request: Request) -> str | None:
-    """Find the Ollama host, supporting standalone Ollama or MultiEngine with Ollama."""
+def _resolve_ollama_engine(request: Request) -> Any | None:
+    """Find the Ollama engine, supporting wrappers and MultiEngine."""
     from openjarvis.engine.multi import MultiEngine
     from openjarvis.security.guardrails import GuardrailsEngine
 
@@ -1189,19 +1189,27 @@ def _resolve_ollama_host(request: Request) -> str | None:
 
     engine_name = getattr(request.app.state, "engine_name", "")
 
-    # 1. Direct Ollama engine
     if engine_name == "ollama" or getattr(engine, "engine_id", "") == "ollama":
-        return getattr(engine, "_host", "http://localhost:11434")
+        return engine
 
-    # 2. MultiEngine containing Ollama
     if isinstance(engine, MultiEngine):
         for key, sub_eng in engine._engines:
             if isinstance(sub_eng, GuardrailsEngine):
                 sub_eng = sub_eng._engine
             if key == "ollama" or getattr(sub_eng, "engine_id", "") == "ollama":
-                return getattr(sub_eng, "_host", "http://localhost:11434")
+                return sub_eng
 
-    # 3. In multi-engine mode, check if Ollama host is configured or reachable
+    return None
+
+
+def _resolve_ollama_host(request: Request) -> str | None:
+    """Find the Ollama host, supporting standalone Ollama or MultiEngine with Ollama."""
+    ollama_engine = _resolve_ollama_engine(request)
+    if ollama_engine is not None:
+        return getattr(ollama_engine, "_host", "http://localhost:11434")
+
+    # In multi-engine mode, check if Ollama host is configured or reachable.
+    engine_name = getattr(request.app.state, "engine_name", "")
     if engine_name == "multi":
         config = getattr(request.app.state, "config", None)
         if config and getattr(config, "engine", None):
@@ -1213,6 +1221,19 @@ def _resolve_ollama_host(request: Request) -> str | None:
         return os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 
     return None
+
+
+def _resolve_ollama_headers(request: Request) -> dict[str, str] | None:
+    """Use the same Ollama credentials as the configured inference engine."""
+    ollama_engine = _resolve_ollama_engine(request)
+    headers = getattr(ollama_engine, "_headers", None)
+    if headers:
+        return headers
+
+    import os
+
+    api_key = os.environ.get("OLLAMA_API_KEY")
+    return {"Authorization": f"Bearer {api_key}"} if api_key else None
 
 
 @router.post("/v1/models/pull")
@@ -1232,8 +1253,13 @@ async def pull_model(request: Request):
 
     import httpx as _httpx
 
+    client_options: dict[str, Any] = {"base_url": host, "timeout": 600.0}
+    headers = _resolve_ollama_headers(request)
+    if headers:
+        client_options["headers"] = headers
+
     try:
-        async with _httpx.AsyncClient(base_url=host, timeout=600.0) as client:
+        async with _httpx.AsyncClient(**client_options) as client:
             resp = await client.post(
                 "/api/pull",
                 json={"name": model_name, "stream": False},
@@ -1272,8 +1298,13 @@ async def delete_model(model_name: str, request: Request):
 
     import httpx as _httpx
 
+    client_options: dict[str, Any] = {"base_url": host, "timeout": 30.0}
+    headers = _resolve_ollama_headers(request)
+    if headers:
+        client_options["headers"] = headers
+
     try:
-        async with _httpx.AsyncClient(base_url=host, timeout=30.0) as client:
+        async with _httpx.AsyncClient(**client_options) as client:
             resp = await client.request(
                 "DELETE",
                 "/api/delete",

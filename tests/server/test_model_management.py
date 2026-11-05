@@ -41,6 +41,7 @@ def _make_ollama_engine(models=None):
     """Create a mock engine that looks like OllamaEngine."""
     engine = _make_engine(engine_id="ollama", models=models)
     engine._host = "http://localhost:11434"
+    engine._headers = None
     return engine
 
 
@@ -69,6 +70,7 @@ class TestModelPull:
 
     def test_pull_success(self):
         engine = _make_ollama_engine()
+        engine._headers = {"Authorization": "Bearer test-ollama-key"}
         client = TestClient(_app(engine, engine_name="ollama"))
 
         mock_resp = MagicMock()
@@ -82,6 +84,9 @@ class TestModelPull:
             resp = client.post("/v1/models/pull", json={"model": "qwen3.5:4b"})
 
         assert resp.status_code == 200
+        assert MockClient.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer test-ollama-key"
+        }
         data = resp.json()
         assert data["status"] == "ok"
         assert data["model"] == "qwen3.5:4b"
@@ -139,6 +144,7 @@ class TestModelDelete:
 
     def test_delete_success(self):
         engine = _make_ollama_engine()
+        engine._headers = {"Authorization": "Bearer test-ollama-key"}
         client = TestClient(_app(engine, engine_name="ollama"))
 
         mock_resp = MagicMock()
@@ -152,6 +158,9 @@ class TestModelDelete:
             resp = client.delete("/v1/models/qwen3:0.6b")
 
         assert resp.status_code == 200
+        assert MockClient.call_args.kwargs["headers"] == {
+            "Authorization": "Bearer test-ollama-key"
+        }
         data = resp.json()
         assert data["status"] == "deleted"
         assert data["model"] == "qwen3:0.6b"

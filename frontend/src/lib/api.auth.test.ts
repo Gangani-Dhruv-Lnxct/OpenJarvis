@@ -29,6 +29,7 @@ class MemoryStorage {
 beforeEach(() => {
   vi.resetModules();
   vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-anon-key');
+  vi.stubEnv('VITE_OPENJARVIS_API_KEY', '');
   fetchMock.mockReset();
   globalThis.fetch = fetchMock;
   (globalThis as unknown as { localStorage: MemoryStorage }).localStorage =

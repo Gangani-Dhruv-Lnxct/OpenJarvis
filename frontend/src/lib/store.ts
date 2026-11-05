@@ -111,12 +111,14 @@ interface Settings {
 }
 
 function loadSettings(): Settings {
+  const envKey = (import.meta.env.VITE_OPENJARVIS_API_KEY as string) || '';
+  const envModel = (import.meta.env.VITE_DEFAULT_MODEL as string) || '';
   const defaults: Settings = {
     theme: 'system',
     apiUrl: '',
-    apiKey: '',
+    apiKey: envKey,
     fontSize: 'default',
-    defaultModel: '',
+    defaultModel: envModel,
     defaultAgent: '',
     temperature: 0.7,
     maxTokens: 4096,
@@ -127,7 +129,13 @@ function loadSettings(): Settings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return defaults;
-    return { ...defaults, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaults,
+      ...parsed,
+      apiKey: parsed.apiKey || envKey,
+      defaultModel: parsed.defaultModel || envModel,
+    };
   } catch {
     return defaults;
   }
@@ -282,7 +290,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     models: [],
     modelsLoading: true,
-    selectedModel: '',
+    selectedModel: loadSettings().defaultModel || '',
     serverInfo: null,
     savings: null,
 

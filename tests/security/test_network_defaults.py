@@ -20,7 +20,7 @@ class TestServerConfigDefaults:
         from openjarvis.core.config import ServerConfig
 
         cfg = ServerConfig()
-        assert cfg.port == 8000
+        assert cfg.port == 10101
 
     def test_cors_origins_default(self) -> None:
         from openjarvis.core.config import ServerConfig
